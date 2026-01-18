@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inverse Kinematics</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 1px solid #444;
+            background-color: #000;
+            cursor: crosshair;
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .slider-container input[type="range"] {
+            width: 150px;
+            cursor: pointer;
+        }
+        .slider-container label {
+            min-width: 140px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <div class="controls">
+        <div class="slider-container">
+            <label>Segments: <span id="segmentCountDisplay">5</span></label>
+            <input type="range" id="segmentCount" min="2" max="20" value="5" oninput="updateSegmentCount(this.value)">
+        </div>
+        <div class="slider-container">
+            <label>Segment Length: <span id="segmentLengthDisplay">40</span></label>
+            <input type="range" id="segmentLength" min="20" max="80" value="40" oninput="updateSegmentLength(this.value)">
+        </div>
+        <div class="slider-container">
+            <label>Iterations: <span id="iterationsDisplay">10</span></label>
+            <input type="range" id="iterations" min="1" max="50" value="10" oninput="updateIterations(this.value)">
+        </div>
+        <button onclick="toggleConstrained()">Toggle Constraints</button>
+    </div>
+    <div class="info">Move your mouse to control the arm. The arm uses FABRIK (Forward And Backward Reaching Inverse Kinematics).</div>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let numSegments = 5;
+        let segmentLength = 40;
+        let iterations = 10;
+        let constrained = false;
+        const maxAngle = Math.PI / 4;
+
+        const baseX = canvas.width / 2;
+        const baseY = canvas.height - 50;
+
+        let targetX = canvas.width / 2;
+        let targetY = canvas.height / 2;
+
+        let joints = [];
+
+        function initializeArm() {
+            joints = [];
+            for (let i = 0; i <= numSegments; i++) {
+                joints.push({
+                    x: baseX,
+                    y: baseY - i * segmentLength
+                });
+            }
+        }
+
+        function updateSegmentCount(value) {
+            numSegments = parseInt(value);
+            document.getElementById('segmentCountDisplay').textContent = numSegments;
+            initializeArm();
+        }
+
+        function updateSegmentLength(value) {
+            segmentLength = parseInt(value);
+            document.getElementById('segmentLengthDisplay').textContent = segmentLength;
+            initializeArm();
+        }
+
+        function updateIterations(value) {
+            iterations = parseInt(value);
+            document.getElementById('iterationsDisplay').textContent = iterations;
+        }
+
+        function toggleConstrained() {
+            constrained = !constrained;
+        }
+
+        function distance(p1, p2) {
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function angle(p1, p2) {
+            return Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        }
+
+        function constrainAngle(currentAngle, parentAngle, maxDelta) {
+            let diff = currentAngle - parentAngle;
+            while (diff > Math.PI) diff -= 2 * Math.PI;
+            while (diff < -Math.PI) diff += 2 * Math.PI;
+
+            if (diff > maxDelta) {
+                return parentAngle + maxDelta;
+            } else if (diff < -maxDelta) {
+                return parentAngle - maxDelta;
+            }
+            return currentAngle;
+        }
+
+        function fabrik() {
+            const target = { x: targetX, y: targetY };
+            const base = { x: baseX, y: baseY };
+
+            for (let iter = 0; iter < iterations; iter++) {
+                joints[joints.length - 1].x = target.x;
+                joints[joints.length - 1].y = target.y;
+
+                for (let i = joints.length - 2; i >= 0; i--) {
+                    const current = joints[i];
+                    const next = joints[i + 1];
+                    const dist = distance(current, next);
+                    const ratio = segmentLength / dist;
+
+                    current.x = next.x + (current.x - next.x) * ratio;
+                    current.y = next.y + (current.y - next.y) * ratio;
+                }
+
+                joints[0].x = base.x;
+                joints[0].y = base.y;
+
+                for (let i = 1; i < joints.length; i++) {
+                    const current = joints[i];
+                    const prev = joints[i - 1];
+                    const dist = distance(current, prev);
+                    const ratio = segmentLength / dist;
+
+                    current.x = prev.x + (current.x - prev.x) * ratio;
+                    current.y = prev.y + (current.y - prev.y) * ratio;
+
+                    if (constrained && i > 1) {
+                        const prevPrev = joints[i - 2];
+                        const parentAngle = angle(prevPrev, prev);
+                        const currentAngle = angle(prev, current);
+                        const constrainedAngle = constrainAngle(currentAngle, parentAngle, maxAngle);
+
+                        current.x = prev.x + Math.cos(constrainedAngle) * segmentLength;
+                        current.y = prev.y + Math.sin(constrainedAngle) * segmentLength;
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath();
+            ctx.arc(targetX, targetY, 8, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.fillStyle = '#888';
+            ctx.fillRect(baseX - 30, baseY, 60, 20);
+
+            for (let i = 0; i < joints.length - 1; i++) {
+                const start = joints[i];
+                const end = joints[i + 1];
+
+                const hue = (i / (joints.length - 1)) * 60 + 180;
+                ctx.strokeStyle = `hsl(${hue}, 80%, 50%)`;
+                ctx.lineWidth = 6 - (i * 0.2);
+
+                ctx.beginPath();
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(end.x, end.y);
+                ctx.stroke();
+            }
+
+            for (let i = 0; i < joints.length; i++) {
+                const joint = joints[i];
+                const hue = (i / (joints.length - 1)) * 60 + 180;
+
+                ctx.fillStyle = `hsl(${hue}, 80%, 60%)`;
+                ctx.beginPath();
+                ctx.arc(joint.x, joint.y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            const endEffector = joints[joints.length - 1];
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(endEffector.x, endEffector.y, 10, 0, 2 * Math.PI);
+            ctx.stroke();
+
+            const dist = distance(endEffector, { x: targetX, y: targetY });
+            ctx.fillStyle = '#aaa';
+            ctx.font = '14px Arial';
+            ctx.fillText(`Distance to target: ${dist.toFixed(1)}px`, 10, 25);
+            ctx.fillText(`Constraints: ${constrained ? 'ON' : 'OFF'}`, 10, 45);
+        }
+
+        function animate() {
+            fabrik();
+            draw();
+            requestAnimationFrame(animate);
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            targetX = e.clientX - rect.left;
+            targetY = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            targetX = touch.clientX - rect.left;
+            targetY = touch.clientY - rect.top;
+        });
+
+        initializeArm();
+        animate();
+    </script>
+</body>
+</html>
